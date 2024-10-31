@@ -1,0 +1,41 @@
+V1
+from tkinter import *
+from tkinter import ttk
+
+# Initialize the main window
+window = Tk()
+window.title('Subtle Differences Image Caption')
+window.geometry("800x400")  # Reduced size to fit smaller cells
+
+# Function to create a table cell with smaller width and height
+def create_cell(frame, text, row, col, width=20, height=2):
+    cell = Label(frame, text=text, relief=RIDGE, width=width, height=height, wraplength=180, justify=LEFT, anchor="w")
+    cell.grid(row=row, column=col, padx=1, pady=1, sticky="nsew")
+    return cell
+
+# Main frame to hold the table
+table_frame = Frame(window)
+table_frame.pack(expand=True, fill=BOTH)
+
+# Create headers
+create_cell(table_frame, "Example", 0, 0, width=5, height=2)
+create_cell(table_frame, "Image 1", 0, 1, width=20, height=2)
+create_cell(table_frame, "Image 2", 0, 2, width=20, height=2)
+
+# Add rows for Color, Shape, and Texture with smaller cell dimensions
+create_cell(table_frame, "Color", 1, 0, width=10, height=2)
+create_cell(table_frame, "The china cabinet in Image 2 has a darker look compared to Image 1.", 1, 1, width=20, height=3)
+create_cell(table_frame, "The pencil case in Image 1 has darker blue in the zipper area compared to Image 2, which is grayish blue.", 1, 2, width=20, height=3)
+
+create_cell(table_frame, "Shape", 2, 0, width=10, height=2)
+create_cell(table_frame, "The china cabinet in Image 1 has more curved carvings on its base than Image 2.", 2, 1, width=20, height=3)
+create_cell(table_frame, "The pencil case in Image 1 is bulky compared to Image 2.", 2, 2, width=20, height=3)
+
+create_cell(table_frame, "Texture", 3, 0, width=10, height=2)
+create_cell(table_frame, "The china cabinet in Image 1 has a glossy finish compared to Image 2.", 3, 1, width=20, height=3)
+create_cell(table_frame, "The pencil case in Image 1 is glossy compared to Image 2.", 3, 2, width=20, height=3)
+
+
+
+# Start the Tkinter main loop
+window.mainloop()
