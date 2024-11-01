@@ -42,18 +42,23 @@ def create_cell(frame, text=None, row=0, col=0, bg_color=None, image=None, wrapl
 table_frame = Frame(window)
 table_frame.pack(expand=True, fill=BOTH)
 
-# Load an image and resize it to fit a reasonable cell size
-image_path = r"C:\Users\lsxln\Desktop\2024_ISA\small_image.jpg"  # Replace with your image path
-img = Image.open(image_path)
-img = img.resize((150, 100), Image.LANCZOS)  # Resize image to fit within the cell
-photo = ImageTk.PhotoImage(img)
+# Load the images with corrected filenames and resize them
+image_path1 = r"C:\Users\lsxln\Desktop\2024_ISA\small_image_1.jpg"  # Path to Image 1
+image_path2 = r"C:\Users\lsxln\Desktop\2024_ISA\small_image_2.jpg"  # Path to Image 2
 
-# Create headers
+# Load and resize images
+img1 = Image.open(image_path1).resize((150, 100), Image.LANCZOS)
+photo1 = ImageTk.PhotoImage(img1)
+
+img2 = Image.open(image_path2).resize((150, 100), Image.LANCZOS)
+photo2 = ImageTk.PhotoImage(img2)
+
+# Create headers with images in "Image 1" and "Image 2" cells
 create_cell(table_frame, "Example", 0, 0, bg_color="white")
-create_cell(table_frame, text="Image 1", row=0, col=1, image=photo)  # Place image with "Image 1" text
-create_cell(table_frame, "Image 2", 0, 2, bg_color="white")
+create_cell(table_frame, text="Image 1", row=0, col=1, image=photo1)  # Place first image with "Image 1" text
+create_cell(table_frame, text="Image 2", row=0, col=2, image=photo2)  # Place second image with "Image 2" text
 
-# Add rows for Color, Shape, and Texture with auto-resizing based on content
+# Add rows for Color, Shape, and Texture without images in the "Color" section
 create_cell(table_frame, "Color", 1, 0, bg_color="white")
 create_cell(table_frame, "The china cabinet in Image 2 has a darker look compared to Image 1.", 1, 1, wraplength=250)
 create_cell(table_frame, "The pencil case in Image 1 has darker blue in the zipper area compared to Image 2, which is grayish blue.", 1, 2, wraplength=250)
