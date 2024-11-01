@@ -1,81 +1,84 @@
+import os
 from tkinter import *
-from tkinter import ttk
 from PIL import Image, ImageTk
 
 # Initialize the main window
 window = Tk()
 window.title('Subtle Differences Image Caption')
-window.geometry("800x400")  # Adjusted size
+window.geometry("800x450")  # Adjusted size for space below
 
-# Function to create a table cell with an optional background color or image
-def create_cell(frame, text=None, row=0, col=0, bg_color=None, image=None, wraplength=200):
-    # If both image and text are provided, create a frame to hold both
-    if image and text:
-        cell_frame = Frame(frame, relief=RIDGE, bd=1)
-        cell_frame.grid(row=row, column=col, padx=1, pady=1, sticky="nsew")
-        
-        img_label = Label(cell_frame, image=image)
-        img_label.image = image  # Keep a reference to avoid garbage collection
-        img_label.pack()
+# Path to the directory containing image pairs
+val_folder = r"C:\Users\lsxln\Desktop\2024_ISA\Train-Val-DS\val"  # Update to your val folder path
 
-        text_label = Label(cell_frame, text=text, wraplength=wraplength, anchor="center")
-        text_label.pack()
+# Retrieve all image paths in the folder
+image_files = [os.path.join(val_folder, f) for f in os.listdir(val_folder) if f.endswith(('.jpg', '.png'))]
+image_pairs = list(zip(image_files[::2], image_files[1::2]))  # Pair consecutive images
 
-        return cell_frame  # Return the frame with both image and text
+# Check if there are image pairs in the folder
+if not image_pairs:
+    print("No image pairs found in the specified folder.")
+    window.destroy()
 
-    elif image:
-        # Only display the image if no text is provided
-        cell = Label(frame, image=image, relief=RIDGE)
-        cell.image = image  # Keep a reference to avoid garbage collection
-        cell.grid(row=row, column=col, padx=1, pady=1, sticky="nsew")
-        return cell  # Return the image cell
-        
-    else:
-        # Only display text
-        cell = Label(frame, text=text, relief=RIDGE, wraplength=wraplength, justify=LEFT, anchor="w")
-        if bg_color:
-            cell.config(bg=bg_color)
-        cell.grid(row=row, column=col, padx=1, pady=1, sticky="nsew")
-        return cell  # Return the text cell
+# Variables to keep track of the current image pair index
+current_index = 0
 
-# Main frame to hold the table
+# Function to load and resize images
+def load_image(path, size=(150, 100)):
+    img = Image.open(path).resize(size, Image.LANCZOS)
+    return ImageTk.PhotoImage(img)
+
+# Function to update images when the "Change" button is clicked
+def update_images():
+    global current_index, photo1, photo2
+    
+    # Load and display the current image pair
+    image_path1, image_path2 = image_pairs[current_index]
+    photo1 = load_image(image_path1)
+    photo2 = load_image(image_path2)
+    
+    img_label1.config(image=photo1)
+    img_label2.config(image=photo2)
+
+    # Move to the next image pair, looping back if needed
+    current_index = (current_index + 1) % len(image_pairs)
+
+# Frame to hold the table
 table_frame = Frame(window)
 table_frame.pack(expand=True, fill=BOTH)
 
-# Load the images with corrected filenames and resize them
-image_path1 = r"C:\Users\lsxln\Desktop\2024_ISA\small_image_1.jpg"  # Path to Image 1
-image_path2 = r"C:\Users\lsxln\Desktop\2024_ISA\small_image_2.jpg"  # Path to Image 2
+# Header and image placeholders
+Label(table_frame, text="Example", relief=RIDGE).grid(row=0, column=0, padx=1, pady=1, sticky="nsew")
+img_label1 = Label(table_frame, relief=RIDGE)
+img_label1.grid(row=0, column=1, padx=1, pady=1, sticky="nsew")
 
-# Load and resize images
-img1 = Image.open(image_path1).resize((150, 100), Image.LANCZOS)
-photo1 = ImageTk.PhotoImage(img1)
+img_label2 = Label(table_frame, relief=RIDGE)
+img_label2.grid(row=0, column=2, padx=1, pady=1, sticky="nsew")
 
-img2 = Image.open(image_path2).resize((150, 100), Image.LANCZOS)
-photo2 = ImageTk.PhotoImage(img2)
+# Add rows for Color, Shape, and Texture without images in these sections
+Label(table_frame, text="Color", relief=RIDGE).grid(row=1, column=0, padx=1, pady=1, sticky="nsew")
+Label(table_frame, text="The china cabinet in Image 2 has a darker look compared to Image 1.", wraplength=250, relief=RIDGE).grid(row=1, column=1, padx=1, pady=1, sticky="nsew")
+Label(table_frame, text="The pencil case in Image 1 has darker blue in the zipper area compared to Image 2, which is grayish blue.", wraplength=250, relief=RIDGE).grid(row=1, column=2, padx=1, pady=1, sticky="nsew")
 
-# Create headers with images in "Image 1" and "Image 2" cells
-create_cell(table_frame, "Example", 0, 0, bg_color="white")
-create_cell(table_frame, text="Image 1", row=0, col=1, image=photo1)  # Place first image with "Image 1" text
-create_cell(table_frame, text="Image 2", row=0, col=2, image=photo2)  # Place second image with "Image 2" text
+Label(table_frame, text="Shape", relief=RIDGE, bg="lightgrey").grid(row=2, column=0, padx=1, pady=1, sticky="nsew")
+Label(table_frame, text="The china cabinet in Image 1 has more curved carvings on its base than Image 2.", wraplength=250, relief=RIDGE, bg="lightgrey").grid(row=2, column=1, padx=1, pady=1, sticky="nsew")
+Label(table_frame, text="The pencil case in Image 1 is bulky compared to Image 2.", wraplength=250, relief=RIDGE, bg="lightgrey").grid(row=2, column=2, padx=1, pady=1, sticky="nsew")
 
-# Add rows for Color, Shape, and Texture without images in the "Color" section
-create_cell(table_frame, "Color", 1, 0, bg_color="white")
-create_cell(table_frame, "The china cabinet in Image 2 has a darker look compared to Image 1.", 1, 1, wraplength=250)
-create_cell(table_frame, "The pencil case in Image 1 has darker blue in the zipper area compared to Image 2, which is grayish blue.", 1, 2, wraplength=250)
+Label(table_frame, text="Texture", relief=RIDGE).grid(row=3, column=0, padx=1, pady=1, sticky="nsew")
+Label(table_frame, text="The china cabinet in Image 1 has a glossy finish compared to Image 2.", wraplength=250, relief=RIDGE).grid(row=3, column=1, padx=1, pady=1, sticky="nsew")
+Label(table_frame, text="The pencil case in Image 1 is glossy compared to Image 2.", wraplength=250, relief=RIDGE).grid(row=3, column=2, padx=1, pady=1, sticky="nsew")
 
-create_cell(table_frame, "Shape", 2, 0, bg_color="lightgrey")
-create_cell(table_frame, "The china cabinet in Image 1 has more curved carvings on its base than Image 2.", 2, 1, wraplength=250, bg_color="lightgrey")
-create_cell(table_frame, "The pencil case in Image 1 is bulky compared to Image 2.", 2, 2, wraplength=250, bg_color="lightgrey")
+# Add "Change" button below the table to cycle through images
+change_button = Button(window, text="Change", command=update_images)
+change_button.pack(pady=10)
 
-create_cell(table_frame, "Texture", 3, 0, bg_color="white")
-create_cell(table_frame, "The china cabinet in Image 1 has a glossy finish compared to Image 2.", 3, 1, wraplength=250)
-create_cell(table_frame, "The pencil case in Image 1 is glossy compared to Image 2.", 3, 2, wraplength=250)
-
-# Configure grid layout to be responsive to content
+# Responsive layout configuration
 for i in range(3):
     table_frame.columnconfigure(i, weight=1)
 for i in range(4):
     table_frame.rowconfigure(i, weight=1)
 
-# Start the Tkinter main loop
+# Initialize by displaying the first image pair
+update_images()
+
+# Run the Tkinter main loop
 window.mainloop()
