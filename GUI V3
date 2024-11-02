@@ -1,0 +1,112 @@
+# Importing necessary modules
+import os
+import numpy as np
+from tqdm import tqdm  # For visible progress bar
+from tensorflow.keras.applications.vgg16 import VGG16, preprocess_input
+from tensorflow.keras.preprocessing.image import load_img, img_to_array
+from tensorflow.keras.models import Model
+from tensorflow.keras.preprocessing.text import Tokenizer
+from tensorflow.keras.preprocessing.sequence import pad_sequences
+from tensorflow.keras.layers import Embedding, LSTM, Dense, Concatenate, Input
+from tensorflow.keras.callbacks import ProgbarLogger
+
+# Directories
+BASE_DIR = r"C:\Users\lsxln\Desktop\2024_ISA\Train-Val-DS"
+train_dir = os.path.join(BASE_DIR, 'train')
+val_dir = os.path.join(BASE_DIR, 'val')
+
+# Initialize VGG16 model for feature extraction
+vgg_model = VGG16(weights='imagenet', include_top=False)
+vgg_model = Model(inputs=vgg_model.inputs, outputs=vgg_model.layers[-2].output)
+
+# Function to extract features from a single image
+def extract_features(img_path):
+    image = load_img(img_path, target_size=(224, 224))
+    image = img_to_array(image)
+    image = np.expand_dims(image, axis=0)
+    image = preprocess_input(image)
+    return vgg_model.predict(image, verbose=0).flatten()
+
+# Function to compute difference between features of two images
+def compute_difference(feature1, feature2):
+    return np.abs(feature1 - feature2)
+
+# Prepare dataset of feature differences and captions
+features = []
+captions = []  # Replace these with actual captions describing differences
+
+for folder_name, directory in [('train', train_dir), ('val', val_dir)]:
+    if os.path.exists(directory):
+        images = sorted(os.listdir(directory))
+        # Using tqdm for progress bar visibility
+        for i in tqdm(range(0, len(images), 2), desc=f"Processing {folder_name} images"):
+            img_name1 = images[i]
+            img_name2 = images[i + 1] if (i + 1) < len(images) else None
+            if img_name2:
+                img_path1 = os.path.join(directory, img_name1)
+                img_path2 = os.path.join(directory, img_name2)
+                try:
+                    # Extract features and compute differences
+                    feature1 = extract_features(img_path1)
+                    feature2 = extract_features(img_path2)
+                    diff_features = compute_difference(feature1, feature2)
+                    features.append(diff_features)
+                    captions.append("Example caption for differences between images.")  # Replace with actual captions
+                except Exception as e:
+                    print(f"Error processing {img_name1} and {img_name2}: {e}")
+    else:
+        print(f"Directory '{directory}' does not exist. Check the path.")
+
+# Tokenize captions
+tokenizer = Tokenizer()
+tokenizer.fit_on_texts(captions)
+total_words = len(tokenizer.word_index) + 1
+
+# Convert captions to sequences
+input_sequences = []
+for line in captions:
+    token_list = tokenizer.texts_to_sequences([line])[0]
+    for i in range(1, len(token_list)):
+        input_sequences.append(token_list[:i+1])
+
+# Pad sequences to the same length
+max_sequence_len = max([len(x) for x in input_sequences])
+input_sequences = np.array(pad_sequences(input_sequences, maxlen=max_sequence_len, padding='pre'))
+
+# Split data into X and y
+X_text, y = input_sequences[:, :-1], input_sequences[:, -1]
+y = np.eye(total_words)[y]  # One-hot encoding for y
+
+# Stack feature differences with the text input sequences
+X_features = np.array(features)
+
+# Repeat `X_features` to match the size of `X_text` and `y`
+X_features_expanded = np.repeat(X_features, max_sequence_len - 1, axis=0)
+print(f"Expanded feature shape: {X_features_expanded.shape}")
+
+# Define the captioning model structure
+text_input = Input(shape=(max_sequence_len - 1,))
+feature_input = Input(shape=(X_features.shape[1],))
+embedding = Embedding(total_words, 100)(text_input)
+lstm_out = LSTM(150)(embedding)
+concat = Concatenate()([feature_input, lstm_out])
+output = Dense(total_words, activation='softmax')(concat)
+
+# Compile the model
+model = Model(inputs=[feature_input, text_input], outputs=output)
+model.compile(loss='categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
+print("\nModel compiled.\n")
+
+# Train the model with tqdm progress display
+print("\nStarting model training...")
+for epoch in range(20):  # Loop for each epoch to show progress
+    print(f"\nEpoch {epoch + 1}/20")
+    with tqdm(total=len(X_text), desc="Training Progress", unit="sample") as pbar:
+        for step in range(len(X_text)):
+            model.train_on_batch([X_features_expanded[step:step+1], X_text[step:step+1]], y[step:step+1])
+            pbar.update(1)
+print("\nModel training completed.\n")
+
+# Save the trained model
+model.save("2024_S2_ISA.h5")
+print("Model saved as '2024_S2_ISA.h5'.")
