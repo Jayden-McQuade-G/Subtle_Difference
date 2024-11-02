@@ -1,109 +1,132 @@
 import torch
 import torch.nn as nn
 import os
-import matplotlib.pyplot as plt
 from torchvision import transforms
-from torch.utils.data import DataLoader, Dataset
-from torchvision.io import read_image
-from imutils import paths
+from PIL import Image, ImageTk
+import tkinter as tk
+from tkinter import filedialog
+import numpy as np
 
-from torchvision import transforms
-from torch.utils.data import Dataset
-from imutils import paths
+# Define a simple CNN for feature extraction
+class SimpleCNN(nn.Module):
+    def __init__(self):
+        super(SimpleCNN, self).__init__()
+        self.conv1 = nn.Conv2d(3, 16, kernel_size=3, stride=1, padding=1)
+        self.relu = nn.ReLU()
+        self.pool = nn.MaxPool2d(kernel_size=2, stride=2, padding=0)
+        self.conv2 = nn.Conv2d(16, 32, kernel_size=3, stride=1, padding=1)
+        self.fc = nn.Linear(32 * 56 * 56, 256)
 
-import cv2
+    def forward(self, x):
+        x = self.pool(self.relu(self.conv1(x)))
+        x = self.pool(self.relu(self.conv2(x)))
+        x = x.view(x.size(0), -1)  # Flatten the tensor
+        x = self.fc(x)
+        return x
 
+# Define an LSTM for generating text descriptions based on features
+class ImageDescriptionLSTM(nn.Module):
+    def __init__(self, input_size, hidden_size, output_size):
+        super(ImageDescriptionLSTM, self).__init__()
+        self.lstm = nn.LSTM(input_size, hidden_size, batch_first=True)
+        self.fc = nn.Linear(hidden_size, output_size)
 
-import urllib.request 
-from PIL import Image 
-import numpy as np 
-from patchify import patchify
+    def forward(self, x):
+        x, _ = self.lstm(x)
+        x = self.fc(x)
+        return x
 
+# Generate a simple description of an image based on its features
+def generate_description(features, lstm_model):
+    dummy_input = features.unsqueeze(1).repeat(1, 10, 1)  # Sequence length of 10
+    output = lstm_model(dummy_input)
+    description = "Image has noticeable features with abstract patterns."  # Placeholder for actual logic
+    return description
 
+# Compare images based on their features
+def compare_images(features1, features2):
+    difference = torch.abs(features1 - features2).mean().item()
+    if difference < 0.1:
+        return "The images are almost identical."
+    elif difference < 0.5:
+        return "The images have noticeable differences in structure and details."
+    else:
+        return "The images are significantly different with major changes in patterns."
 
-class ImageDataset():
-    def __init__(self, image_dir, transform=None):
-        #set all image file paths in directory
-        self.image_paths = list(paths.list_images(image_dir))
-        self.transform = transform
-    
-    def __len__(self):
-        return len(self.image_paths)
-
-    def __getitem__(self, index):
-        img_path = self.image_paths[index]
-        image = read_image(img_path)
-
-        if self.transform:
-
-            image = self.transform(image)
-        
-
-        return image
-
-
-def patching(image):
-    if isinstance(image, torch.Tensor):
-        image = image.permute(1, 2, 0).numpy()  # Convert (C, H, W) to (H, W, C)
-    elif isinstance(image, Image.Image):
-        image = np.array(image)
-
-    img_arr = np.asarray(image)
-    patches = patchify(image, (224, 224, 3), step = 224)
-    return patches
-
-
-
-
-
-def main():
-
-    print(torch.__version__)
-
-    # Define transformations for resizing and converting images to tensors
+# Load and preprocess images
+def load_image(path):
     transform = transforms.Compose([
-        transforms.ToPILImage(),
         transforms.Resize((224, 224)),
         transforms.ToTensor()
     ])
+    image = Image.open(path).convert("RGB")
+    return transform(image).unsqueeze(0), image
 
-    BATCH_SIZE = 32
+# Tkinter UI setup
+def create_ui():
+    def open_image1():
+        filepath = filedialog.askopenfilename()
+        if filepath:
+            img1, pil_img1 = load_image(filepath)
+            panel1.config(image=ImageTk.PhotoImage(pil_img1))
+            panel1.image = ImageTk.PhotoImage(pil_img1)
+            global image_tensor1
+            image_tensor1 = img1
 
-    # DATA_DIR = os.path.abspath('../Train-Val-DS' train))
-    TRAIN_DIR = os.path.join('../Train-Val-DS/train')
-    TEST_DIR = os.path.join('../Train-Val-DS/val')
+    def open_image2():
+        filepath = filedialog.askopenfilename()
+        if filepath:
+            img2, pil_img2 = load_image(filepath)
+            panel2.config(image=ImageTk.PhotoImage(pil_img2))
+            panel2.image = ImageTk.PhotoImage(pil_img2)
+            global image_tensor2
+            image_tensor2 = img2
 
-    # Display an error message if the dataset directories are not found
-    if not os.path.exists(TRAIN_DIR):
-        print(f"Training directory '{TRAIN_DIR}' not found.")
-        return
-    if not os.path.exists(TEST_DIR):
-        print(f"Testing directory '{TEST_DIR}' not found.")
-        return
+    def analyze_images():
+        if image_tensor1 is not None and image_tensor2 is not None:
+            features1 = cnn_model(image_tensor1)
+            features2 = cnn_model(image_tensor2)
+            desc1 = generate_description(features1, lstm_model)
+            desc2 = generate_description(features2, lstm_model)
+            comparison_result = compare_images(features1, features2)
+            
+            description1_label.config(text=f"Image 1 Description: {desc1}")
+            description2_label.config(text=f"Image 2 Description: {desc2}")
+            comparison_label.config(text=f"Comparison Result: {comparison_result}")
 
-    # Load the datasets for training and testing
-    train_set = ImageDataset(image_dir=TRAIN_DIR, transform=transform)
-    test_set = ImageDataset(image_dir=TEST_DIR, transform=transform)
+    # Initialize models
+    global cnn_model, lstm_model, image_tensor1, image_tensor2
+    cnn_model = SimpleCNN()
+    lstm_model = ImageDescriptionLSTM(input_size=256, hidden_size=128, output_size=50)
+    image_tensor1 = None
+    image_tensor2 = None
 
-    # Create DataLoaders for training and testing sets
-    train_dataloader = DataLoader(dataset=train_set, shuffle=True, batch_size=BATCH_SIZE, num_workers=2)
-    test_dataloader = DataLoader(dataset=test_set, shuffle=False, batch_size=BATCH_SIZE, num_workers=2)
+    # Create the main tkinter window
+    root = tk.Tk()
+    root.title("Image Comparison Tool")
 
+    # UI layout
+    panel1 = tk.Label(root)
+    panel1.grid(row=0, column=0, padx=10, pady=10)
+    panel2 = tk.Label(root)
+    panel2.grid(row=0, column=1, padx=10, pady=10)
 
-    #####################################################################################
-    # Display a random image from the training set
-    image_tensor = train_set[1]  # Get the image tensor at index 1
-    image_np = image_tensor.permute(1, 2, 0).numpy()  # Convert (C, H, W) to (H, W, C)
-    # Convert from RGB to BGR for OpenCV
-    image_bgr = cv2.cvtColor(image_np, cv2.COLOR_RGB2BGR)
-    # Display the image
-    cv2.imshow('Image Window', image_bgr)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
-    ######################################################################################
+    btn1 = tk.Button(root, text="Open Image 1", command=open_image1)
+    btn1.grid(row=1, column=0, padx=10, pady=10)
+    btn2 = tk.Button(root, text="Open Image 2", command=open_image2)
+    btn2.grid(row=1, column=1, padx=10, pady=10)
 
-    patching(train_set[1])
-    
+    analyze_btn = tk.Button(root, text="Analyze Images", command=analyze_images)
+    analyze_btn.grid(row=2, column=0, columnspan=2, pady=10)
+
+    description1_label = tk.Label(root, text="Image 1 Description: ")
+    description1_label.grid(row=3, column=0, columnspan=2)
+    description2_label = tk.Label(root, text="Image 2 Description: ")
+    description2_label.grid(row=4, column=0, columnspan=2)
+    comparison_label = tk.Label(root, text="Comparison Result: ")
+    comparison_label.grid(row=5, column=0, columnspan=2)
+
+    root.mainloop()
 
 if __name__ == "__main__":
-    main()
+    create_ui()
