@@ -1,0 +1,167 @@
+# Import necessary libraries
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torchvision import transforms
+from PIL import Image
+import nltk
+from nltk.corpus import wordnet as wn
+import tkinter as tk
+from tkinter import filedialog
+from tkinter import Label
+
+# Download NLTK data for synonyms
+nltk.download('punkt')
+nltk.download('wordnet')
+
+# Generate vocabulary from WordNet synonyms
+def generate_vocabulary():
+    # Base words to derive synonyms
+    base_words = [
+        "color", "change", "modify", "add", "remove", "alter",
+        "background", "foreground", "small", "large", "object",
+        "shape", "position", "texture", "pattern", "dark", "light",
+        "circle", "square", "triangle", "line", "dot", "stripe",
+        "near", "far", "visible", "blur", "sharp", "clear",
+        "shadow", "highlight", "edge", "corner", "center",
+        "move", "rotate", "new", "old", "overlap"
+    ]
+
+    # Create a set to store unique vocabulary words
+    vocabulary_set = set()
+    for word in base_words:
+        synonyms = wn.synsets(word)  # Get synonyms for each base word
+        for synonym in synonyms:
+            vocabulary_set.update([lemma.name() for lemma in synonym.lemmas()])
+
+    # Add special tokens to the vocabulary
+    vocabulary_set.update(["<start>", "<end>", "<pad>", "<unk>"])
+    return sorted(vocabulary_set)
+
+# Create vocabulary and dictionaries for mapping words to indices
+vocabulary = generate_vocabulary()
+vocab_dict = {word: idx for idx, word in enumerate(vocabulary)}
+inverse_vocab_dict = {idx: word for word, idx in vocab_dict.items()}
+
+# Define an LSTM for generating text descriptions based on features
+class ImageDescriptionLSTM(nn.Module):
+    def __init__(self, input_size, hidden_size, output_size):
+        super(ImageDescriptionLSTM, self).__init__()
+        self.lstm = nn.LSTM(input_size, hidden_size, batch_first=True)  # Initialize LSTM
+        self.fc = nn.Linear(hidden_size, output_size)  # Fully connected layer to map to output size
+
+    def forward(self, x):
+        x, _ = self.lstm(x)  # Forward pass through LSTM
+        x = self.fc(x)  # Pass the LSTM output through the fully connected layer
+        return x
+
+# Caption Generator model using LSTM
+class CaptionGenerator(nn.Module):
+    def __init__(self, vocab_size, embed_size, hidden_size, num_layers=1):
+        super(CaptionGenerator, self).__init__()
+        self.embedding = nn.Embedding(vocab_size, embed_size)  # Embedding layer for words
+        self.lstm = nn.LSTM(embed_size, hidden_size, num_layers, batch_first=True)  # LSTM for sequences
+        self.fc = nn.Linear(hidden_size, vocab_size)  # Output layer to map LSTM outputs to vocabulary size
+
+    def forward(self, features, captions):
+        embeddings = self.embedding(captions)  # Get embeddings for input captions
+        lstm_input = torch.cat((features.unsqueeze(1), embeddings), dim=1)  # Combine features and embeddings
+        hiddens, _ = self.lstm(lstm_input)  # Forward pass through LSTM
+        outputs = self.fc(hiddens)  # Pass through output layer
+        return outputs
+
+# Generate a meaningful description of an image based on its features
+def generate_description(features, lstm_model):
+    caption = [vocab_dict["<start>"]]  # Start caption generation with <start> token
+    for _ in range(20):  # Limit caption to 20 words
+        caption_tensor = torch.tensor([caption], dtype=torch.long)  # Create tensor from caption list
+        output = lstm_model(features.unsqueeze(1))  # Pass features to LSTM
+        predicted = output[:, -1, :].max(1)[1].item()  # Get the predicted word index
+        caption.append(predicted)  # Append predicted word index to caption
+        if predicted == vocab_dict["<end>"]:  # Stop if <end> token is predicted
+            break
+    return ' '.join([inverse_vocab_dict[idx] for idx in caption[1:-1]])  # Convert indices back to words and return the caption
+
+# Load and preprocess images
+def load_image(path):
+    transform = transforms.Compose([
+        transforms.Resize((224, 224)),  # Resize image to 224x224
+        transforms.ToTensor()  # Convert image to tensor
+    ])
+    image = Image.open(path).convert("RGB")  # Open image and convert to RGB
+    return transform(image).unsqueeze(0), image  # Return transformed image tensor and original image
+
+# Tkinter UI setup
+def create_ui():
+    # Function to open the first image
+    def open_image1():
+        filepath = filedialog.askopenfilename()  # Open file dialog
+        if filepath:
+            img1, pil_img1 = load_image(filepath)  # Load and preprocess image
+            panel1.config(image=ImageTk.PhotoImage(pil_img1))  # Update GUI with image
+            panel1.image = ImageTk.PhotoImage(pil_img1)  # Keep a reference to avoid garbage collection
+            global image_tensor1
+            image_tensor1 = img1  # Store image tensor for analysis
+
+    # Function to open the second image
+    def open_image2():
+        filepath = filedialog.askopenfilename()  # Open file dialog
+        if filepath:
+            img2, pil_img2 = load_image(filepath)  # Load and preprocess image
+            panel2.config(image=ImageTk.PhotoImage(pil_img2))  # Update GUI with image
+            panel2.image = ImageTk.PhotoImage(pil_img2)  # Keep a reference to avoid garbage collection
+            global image_tensor2
+            image_tensor2 = img2  # Store image tensor for analysis
+
+    # Analyze images and generate descriptions
+    def analyze_images():
+        if image_tensor1 is not None and image_tensor2 is not None:
+            features1 = cnn_model(image_tensor1)  # Extract features from image 1
+            features2 = cnn_model(image_tensor2)  # Extract features from image 2
+            desc1 = generate_description(features1, lstm_model)  # Generate description for image 1
+            desc2 = generate_description(features2, lstm_model)  # Generate description for image 2
+            comparison_result = compare_images(features1, features2)  # Compare features and get result
+
+            # Update GUI with results
+            description1_label.config(text=f"Image 1 Description: {desc1}")
+            description2_label.config(text=f"Image 2 Description: {desc2}")
+            comparison_label.config(text=f"Comparison Result: {comparison_result}")
+
+    # Initialize models
+    global cnn_model, lstm_model, image_tensor1, image_tensor2
+    cnn_model = SimpleCNN()  # Instantiate CNN model
+    lstm_model = ImageDescriptionLSTM(input_size=256, hidden_size=128, output_size=len(vocabulary))  # Instantiate LSTM model
+    image_tensor1 = None  # Placeholder for first image tensor
+    image_tensor2 = None  # Placeholder for second image tensor
+
+    # Create the main tkinter window
+    root = tk.Tk()
+    root.title("Image Comparison Tool")  # Set window title
+
+    # UI layout
+    panel1 = Label(root)  # Label for displaying first image
+    panel1.grid(row=0, column=0, padx=10, pady=10)
+    panel2 = Label(root)  # Label for displaying second image
+    panel2.grid(row=0, column=1, padx=10, pady=10)
+
+    # Buttons for opening images and analyzing
+    open_button1 = tk.Button(root, text="Open Image 1", command=open_image1)
+    open_button1.grid(row=1, column=0, padx=10, pady=10)
+    open_button2 = tk.Button(root, text="Open Image 2", command=open_image2)
+    open_button2.grid(row=1, column=1, padx=10, pady=10)
+    analyze_button = tk.Button(root, text="Analyze Images", command=analyze_images)
+    analyze_button.grid(row=2, column=0, columnspan=2, pady=10)
+
+    # Labels for displaying descriptions and comparison results
+    description1_label = Label(root, text="")
+    description1_label.grid(row=3, column=0)
+    description2_label = Label(root, text="")
+    description2_label.grid(row=3, column=1)
+    comparison_label = Label(root, text="")
+    comparison_label.grid(row=4, column=0, columnspan=2)
+
+    root.mainloop()  # Start the Tkinter event loop
+
+# Call the create_ui function to run the GUI
+if __name__ == "__main__":
+    create_ui()
