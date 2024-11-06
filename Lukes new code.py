@@ -1,11 +1,10 @@
-# ahahha_spacy.py
+# ahahha.py
 
 import os
 import json
 import spacy
 import torch
 import torch.nn as nn
-import torchvision.models as models
 from PIL import Image, ImageTk
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
@@ -299,35 +298,48 @@ class EncoderCNN(nn.Module):
         super(EncoderCNN, self).__init__()
         self.enc_image_size = encoded_image_size
 
-        # Load the pretrained ResNet-50 model with updated weights parameter
-        resnet = models.resnet50(weights=models.ResNet50_Weights.IMAGENET1K_V1)
+        # Define a simple CNN architecture
+        self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3)  # (batch, 64, 112, 112)
+        self.bn1 = nn.BatchNorm2d(64)
+        self.relu = nn.ReLU(inplace=True)
+        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)  # (batch, 64, 56, 56)
 
-        # Remove the linear and pool layers (since we're not doing classification)
-        modules = list(resnet.children())[:-2]
-        self.resnet = nn.Sequential(*modules)
+        # Additional convolutional layers
+        self.layer1 = self._make_layer(64, 128, blocks=2)   # (batch, 128, 56, 56)
+        self.layer2 = self._make_layer(128, 256, blocks=2, stride=2)  # (batch, 256, 28, 28)
+        self.layer3 = self._make_layer(256, 512, blocks=2, stride=2)  # (batch, 512, 14, 14)
 
-        # Resize image to fixed size to allow input images of variable size
-        self.adaptive_pool = nn.AdaptiveAvgPool2d((1, 1))
-        self.fc = nn.Linear(resnet.fc.in_features, 512)  # Keeping output size 512
+        # Adaptive pooling and fully connected layer
+        self.adaptive_pool = nn.AdaptiveAvgPool2d((1, 1))  # (batch, 512, 1, 1)
+        self.fc = nn.Linear(512, 512)                      # (batch, 512)
         self.bn = nn.BatchNorm1d(512, momentum=0.01)
 
+    def _make_layer(self, in_channels, out_channels, blocks, stride=1):
+        layers = []
+        layers.append(nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=stride, padding=1))
+        layers.append(nn.BatchNorm2d(out_channels))
+        layers.append(nn.ReLU(inplace=True))
+        for _ in range(1, blocks):
+            layers.append(nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1))
+            layers.append(nn.BatchNorm2d(out_channels))
+            layers.append(nn.ReLU(inplace=True))
+        return nn.Sequential(*layers)
+
     def forward(self, images):
-        """
-        Forward propagation.
+        x = self.conv1(images)        # (batch, 64, 112, 112)
+        x = self.bn1(x)
+        x = self.relu(x)
+        x = self.maxpool(x)           # (batch, 64, 56, 56)
 
-        Args:
-            images: input images, a tensor of dimensions (batch_size, 3, image_size, image_size)
+        x = self.layer1(x)            # (batch, 128, 56, 56)
+        x = self.layer2(x)            # (batch, 256, 28, 28)
+        x = self.layer3(x)            # (batch, 512, 14, 14)
 
-        Returns:
-            features: encoded images, a tensor of dimension (batch_size, 512)
-        """
-        features = self.resnet(images)  # (batch_size, 2048, 7, 7)
-        features = self.adaptive_pool(features)  # (batch_size, 2048, 1, 1)
-        features = features.view(features.size(0), -1)  # (batch_size, 2048)
-        features = self.fc(features)  # (batch_size, 512)
-        features = self.bn(features)  # (batch_size, 512)
-        return features
-
+        x = self.adaptive_pool(x)     # (batch, 512, 1, 1)
+        x = x.view(x.size(0), -1)     # (batch, 512)
+        x = self.fc(x)                # (batch, 512)
+        x = self.bn(x)                # (batch, 512)
+        return x
 
 class DecoderRNN(nn.Module):
     def __init__(self, embed_size, hidden_size, vocab_size, num_layers=1):
@@ -397,7 +409,6 @@ class DecoderRNN(nn.Module):
             sampled_caption.append(word)
         generated_caption = ' '.join(sampled_caption)
         return generated_caption
-
 
 class ImageCaptioningModel(nn.Module):
     def __init__(self, encoder, decoder):
@@ -710,6 +721,7 @@ def main():
     for i, entry in enumerate(train_annotations[:2]):  # Inspect first 2 entries
         print(f"Entry {i + 1} Keys: {list(entry.keys())}")
         print(f"Entry {i + 1} Attributes: {[attr['key'] for attr in entry.get('attributes', [])]}")
+
     print("\n--- Validation Annotations Sample ---")
     for i, entry in enumerate(val_annotations[:2]):  # Inspect first 2 entries
         print(f"Entry {i + 1} Keys: {list(entry.keys())}")
@@ -746,6 +758,13 @@ def main():
     key_words = ['pineapple', 'rough', 'wider', 'light', 'yellow', 'thorns', 'smoother', 'darker']
     missing_words = [word for word in key_words if word not in word_to_idx]
     print(f"Missing Key Words in Vocabulary: {missing_words}")
+
+    # If any key words are missing, add them manually
+    for word in missing_words:
+        word_to_idx[word] = len(word_to_idx)
+        idx_to_word[len(idx_to_word)] = word
+    vocab_size = len(word_to_idx)
+    print(f"Updated Vocabulary Size after adding missing words: {vocab_size}")
 
     # -----------------------------
     # Preprocess Captions
@@ -899,6 +918,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
- 
-  
