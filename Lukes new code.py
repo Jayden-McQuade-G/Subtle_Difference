@@ -197,7 +197,7 @@ class ImageCaptioningDataset(Dataset):
 # 4. Vocabulary Building
 # -----------------------------
 
-def build_vocabulary(captions, threshold=5):
+def build_vocabulary(captions, threshold=1):
     """
     Builds a vocabulary dictionary based on word frequency.
 
@@ -688,6 +688,8 @@ def main():
     # -----------------------------
     transform = transforms.Compose([
         transforms.Resize((224, 224)),
+        transforms.RandomHorizontalFlip(),  # Data augmentation
+        transforms.RandomRotation(10),      # Data augmentation
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406],  # Using ImageNet means
                              std=[0.229, 0.224, 0.225])
@@ -735,8 +737,15 @@ def main():
     # -----------------------------
     # Build Vocabulary
     # -----------------------------
-    word_to_idx, idx_to_word, vocab_size = build_vocabulary(train_captions, threshold=5)
+    word_to_idx, idx_to_word, vocab_size = build_vocabulary(train_captions, threshold=1)
     print(f"\nVocabulary Size: {vocab_size}")
+
+    # -----------------------------
+    # Inspect Vocabulary Coverage
+    # -----------------------------
+    key_words = ['pineapple', 'rough', 'wider', 'light', 'yellow', 'thorns', 'smoother', 'darker']
+    missing_words = [word for word in key_words if word not in word_to_idx]
+    print(f"Missing Key Words in Vocabulary: {missing_words}")
 
     # -----------------------------
     # Preprocess Captions
@@ -802,7 +811,7 @@ def main():
     hidden_size = 512
     num_layers = 1
     learning_rate = 1e-4
-    num_epochs = 10
+    num_epochs = 20  # Increased from 10 to 20 for better learning
 
     # Enable cuDNN benchmarking for optimized performance
     torch.backends.cudnn.benchmark = True
@@ -890,3 +899,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+  
