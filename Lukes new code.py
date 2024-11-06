@@ -811,7 +811,7 @@ def main():
     hidden_size = 512
     num_layers = 1
     learning_rate = 1e-4
-    num_epochs = 20  # Increased from 10 to 20 for better learning
+    num_epochs = 5  # Reduced from 20 to 5 as per your request
 
     # Enable cuDNN benchmarking for optimized performance
     torch.backends.cudnn.benchmark = True
@@ -899,4 +899,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+ 
   
