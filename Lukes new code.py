@@ -1,5 +1,6 @@
-# ahahha.py
+#ahahha.py
 
+#Import Library Modules
 import os
 import json
 import spacy
@@ -18,11 +19,11 @@ import logging
 from functools import partial
 from torch.cuda import amp
 
-# -----------------------------
-# 1. Initialize spaCy and Logging
-# -----------------------------
 
-# Setup logging to file and console
+### Initialize spaCy and Logging ###
+#----------------------------------#
+
+#Define Logging structure to track code progress
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -32,7 +33,7 @@ logging.basicConfig(
     ]
 )
 
-# Load spaCy's English model
+#Load English Vocabulary from spaCy
 try:
     nlp = spacy.load('en_core_web_sm')
 except OSError:
@@ -41,89 +42,63 @@ except OSError:
     download('en_core_web_sm')
     nlp = spacy.load('en_core_web_sm')
 
-
+#Use spaCy library to tokenise input text
+#input: target "text"
+#output: list of tokenised text
 def tokenize_spacy(text):
-    """
-    Tokenizes input text using spaCy.
-
-    Args:
-        text (str): The text to tokenize.
-
-    Returns:
-        list: List of token strings.
-    """
     doc = nlp(text.lower())
     return [token.text for token in doc]
 
-# -----------------------------
-# 2. Define Collate Function Globally
-# -----------------------------
 
+## Define Collate Function ##
+#---------------------------#
+
+#Formats images and captions to correctly sized tensors
+#Input: List of data (before_image, after_image, caption), word to index dictionary, maximum length for padding
+#Output: correctly formatted Tensors, before_image, after_image, captions, list of string captions
 def collate_fn(data, word_to_idx, max_length):
-    """
-    Creates mini-batch tensors from the list of tuples (before_image, after_image, caption).
-
-    Args:
-        data: list of tuples (before_image, after_image, caption).
-        word_to_idx (dict): Mapping from words to indices.
-        max_length (int): Maximum length for padding.
-
-    Returns:
-        before_images: Tensor of shape (batch_size, 3, 224, 224)
-        after_images: Tensor of shape (batch_size, 3, 224, 224)
-        captions: Tensor of shape (batch_size, max_caption_length)
-        captions_strings: List of caption strings
-    """
     before_images, after_images, captions = zip(*data)
 
-    # Stack images
+    #Stack images
     before_images = torch.stack(before_images, 0)
     after_images = torch.stack(after_images, 0)
 
-    # Convert captions to sequences
-    sequences = [caption_to_sequence(caption, word_to_idx) for caption in captions]
+    #add all captions to a list
+    caption_list = [caption_to_sequence(caption, word_to_idx) for caption in captions]
 
-    # Pad sequences
-    padded_sequences, _ = pad_caption_sequences(sequences, word_to_idx, max_length=max_length)
+    #add padding = make all captions same length
+    padded_caption_list, _ = pad_caption_sequences(caption_list, word_to_idx, max_length=max_length)
 
-    return before_images, after_images, padded_sequences, captions  # Return captions strings as well
+    return before_images, after_images, padded_caption_list, captions  # Return captions strings as well
 
-# -----------------------------
-# 3. Dataset Class
-# -----------------------------
 
+## Dataset Class ##
+#-----------------#
+#Define custom dataset class, with variables and methods used for loading and proccessing of images
 class ImageCaptioningDataset(Dataset):
+
+    #Initialise datase - runs when that database class is instantiated
+    #Input: image parent path, path to annotations, word to index map, transform to apply
     def __init__(self, image_dir, annotation_file, word_to_idx, transform=None):
-        """
-        Args:
-            image_dir (str): Parent directory containing 'train' and 'val' subdirectories.
-            annotation_file (str): Path to the JSON annotations file.
-            word_to_idx (dict): Mapping from words to indices.
-            transform (callable, optional): Optional transform to be applied on an image.
-        """
         self.image_dir = image_dir
         self.annotations = self.load_annotations(annotation_file)
         self.word_to_idx = word_to_idx
         self.transform = transform
         self.image_pairs, self.captions = self.load_image_pairs()
 
+    #load annoations json file to a list of annotations
+    #input: annotations path
+    #output: list of annotations
     def load_annotations(self, json_file):
         with open(json_file, 'r') as f:
             data = json.load(f)
         return data
 
+    #Locates a specific file using an image name
+    #input: path of target image folder, target image name
+    #output: (if found)target image path or  (if not found)none
     def find_image_file(self, image_set, image_name):
-        """
-        Finds the image file with the given name and any common image extension.
-
-        Args:
-            image_set (str): 'train' or 'val'.
-            image_name (str): Name of the image without extension.
-
-        Returns:
-            str: Full path to the image file if found, else None.
-        """
-        extensions = ['.jpg', '.jpeg', '.png', '.bmp', '.gif']
+        extensions = ['.jpg', '.jpeg', '.png', '.bmp', '.gif'] #target any extension
         for ext in extensions:
             image_path = os.path.join(self.image_dir, image_set, image_name + ext)
             logging.debug(f"Searching for image: {image_path}")
@@ -133,21 +108,25 @@ class ImageCaptioningDataset(Dataset):
         logging.debug(f"Image not found: {image_set}/{image_name}")
         return None
 
+    #Used to load images and captions and match the captions to the target file names
     def load_image_pairs(self):
-        image_pairs = []
-        captions = []
+        image_pairs = [] #store before and after image
+        captions = [] #store captions for the pair
 
+        #loop over each file caption in the json list and display progress bar=(TQDM)
         for entry in tqdm(self.annotations, desc="Loading Image Pairs"):
-            # Extract image filenames
-            contents = entry.get('contents', [])
+            #add file names in contents section to a list  
+            contents = entry.get('contents', []) #/////REVIEW/////
+
+            #if an image doesnt have a corresponding before or after image ignore the image
             if len(contents) < 2:
                 logging.info(f"Insufficient image contents for entry: {entry.get('name', 'Unknown')}")
                 continue
 
-            # Determine if the entry is for 'train' or 'val' based on the annotation file
+            #checks if the target set is train or target and stores
             image_set = 'train' if 'train' in entry.get('name', '').lower() else 'val'
 
-            # Extract 'after' and 'before' image names without 'train/' or 'val/' prefixes
+            #Get file name for image pair
             after_img_filename = contents[0].get('name', '').replace(f"{image_set}/", '')
             before_img_filename = contents[1].get('name', '').replace(f"{image_set}/", '')
 
@@ -155,17 +134,18 @@ class ImageCaptioningDataset(Dataset):
                 logging.info(f"Missing image filenames in entry: {entry.get('name', 'Unknown')}")
                 continue
 
-            # Find image files with any common extension
+            #finds and stores the before and after images matching the above before/after name
             after_img = self.find_image_file(image_set, after_img_filename)
             before_img = self.find_image_file(image_set, before_img_filename)
 
+            #checks if all data founds and if so adds returns the images + captions
             if after_img and before_img:
                 image_pairs.append((before_img, after_img))
-                # Concatenate all 'value's from 'attributes' as the caption
+                #Extracts each individual caption and adds them to a string ////Review////
                 attribute_values = [attr['value'] for attr in entry.get('attributes', []) if 'value' in attr]
                 concatenated_captions = ' '.join(attribute_values)
                 captions.append(concatenated_captions)
-            else:
+            else: #store missing images/poisoned data
                 missing = []
                 if not after_img:
                     missing.append(f"{image_set}/{after_img_filename}")
@@ -175,9 +155,11 @@ class ImageCaptioningDataset(Dataset):
 
         return image_pairs, captions
 
+    #Return total data points in the set
     def __len__(self):
         return len(self.captions)
 
+    #retrieves a data point from the set at specofoed index
     def __getitem__(self, idx):
         before_img_path, after_img_path = self.image_pairs[idx]
         caption = self.captions[idx]
@@ -192,52 +174,33 @@ class ImageCaptioningDataset(Dataset):
 
         return before_image, after_image, caption  # Return caption string
 
-# -----------------------------
-# 4. Vocabulary Building
-# -----------------------------
 
+## Create Vocabulary ##
+#--------------------#
+#input: list of captions, min frequency reqired to add word to vocab
+#output: wordindex map, index word map, size of vocabulary  ////Word index concept ///REVIEW/////
 def build_vocabulary(captions, threshold=1):
-    """
-    Builds a vocabulary dictionary based on word frequency.
-
-    Args:
-        captions (list): List of caption strings.
-        threshold (int): Minimum frequency for a word to be included.
-
-    Returns:
-        word_to_idx (dict): Mapping from words to unique indices.
-        idx_to_word (dict): Mapping from indices to words.
-        vocab_size (int): Size of the vocabulary.
-    """
     tokens = []
     for caption in captions:
         tokens.extend(tokenize_spacy(caption))  # Using spaCy tokenizer
-
     counter = Counter(tokens)
-    # Remove words that appear less than the threshold
+
+    #Dont include words less then min frequency
     vocab = [word for word, count in counter.items() if count >= threshold]
 
-    # Add special tokens
+    #extra terms
     vocab = ['<pad>', '<start>', '<end>', '<unk>'] + vocab
 
-    # Create mappings
+    #map words to index vice versa
     word_to_idx = {word: idx for idx, word in enumerate(vocab)}
     idx_to_word = {idx: word for idx, word in enumerate(vocab)}
 
     return word_to_idx, idx_to_word, len(vocab)
 
-
+#make caption into list of word indecies ///Review///
+#input: caption, word idex
+#output: list of word index
 def caption_to_sequence(caption, word_to_idx):
-    """
-    Converts a caption string into a list of word indices.
-
-    Args:
-        caption (str): The caption string.
-        word_to_idx (dict): Mapping from words to indices.
-
-    Returns:
-        sequence (list): List of word indices.
-    """
     tokens = tokenize_spacy(caption)  # Using spaCy tokenizer
     sequence = [word_to_idx.get('<start>')]
     for token in tokens:
@@ -248,35 +211,17 @@ def caption_to_sequence(caption, word_to_idx):
     sequence.append(word_to_idx.get('<end>'))
     return sequence
 
-
+#list of caption to word index ///REVIEW///
+#input: caption, word index
+#output: list of word index
 def preprocess_captions(captions, word_to_idx):
-    """
-    Converts a list of captions into sequences of word indices.
-
-    Args:
-        captions (list): List of caption strings.
-        word_to_idx (dict): Mapping from words to indices.
-
-    Returns:
-        sequences (list): List of lists containing word indices.
-    """
     sequences = [caption_to_sequence(caption, word_to_idx) for caption in captions]
     return sequences
 
-
+#make captions have equal lengths via padding
+#input: word index list, word index, max padd length
+#output: padded caption, max length
 def pad_caption_sequences(sequences, word_to_idx, max_length=None):
-    """
-    Pads sequences to the same length.
-
-    Args:
-        sequences (list): List of lists containing word indices.
-        word_to_idx (dict): Mapping from words to indices.
-        max_length (int, optional): Maximum length for padding. If None, uses the longest sequence.
-
-    Returns:
-        padded_sequences (Tensor): Tensor of padded sequences.
-        max_length (int): The maximum sequence length.
-    """
     if not max_length:
         max_length = max(len(seq) for seq in sequences)
     padded_sequences = []
@@ -289,29 +234,28 @@ def pad_caption_sequences(sequences, word_to_idx, max_length=None):
     padded_sequences = torch.stack(padded_sequences)
     return padded_sequences, max_length
 
-# -----------------------------
-# 5. Model Architecture
-# -----------------------------
-
+### CNN STRUCTURE class ####
+#Encoder
+#-------------------#
 class EncoderCNN(nn.Module):
     def __init__(self, encoded_image_size=14):
         super(EncoderCNN, self).__init__()
         self.enc_image_size = encoded_image_size
 
-        # Define a simple CNN architecture
+        #define Architectre
         self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3)  # (batch, 64, 112, 112)
         self.bn1 = nn.BatchNorm2d(64)
         self.relu = nn.ReLU(inplace=True)
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)  # (batch, 64, 56, 56)
 
-        # Additional convolutional layers
+        #CNN layers
         self.layer1 = self._make_layer(64, 128, blocks=2)   # (batch, 128, 56, 56)
         self.layer2 = self._make_layer(128, 256, blocks=2, stride=2)  # (batch, 256, 28, 28)
         self.layer3 = self._make_layer(256, 512, blocks=2, stride=2)  # (batch, 512, 14, 14)
 
-        # Adaptive pooling and fully connected layer
-        self.adaptive_pool = nn.AdaptiveAvgPool2d((1, 1))  # (batch, 512, 1, 1)
-        self.fc = nn.Linear(512, 512)                      # (batch, 512)
+        
+        self.adaptive_pool = nn.AdaptiveAvgPool2d((1, 1))  #Adaptive pooling layer
+        self.fc = nn.Linear(512, 512)                      #fully Connected layer   
         self.bn = nn.BatchNorm1d(512, momentum=0.01)
 
     def _make_layer(self, in_channels, out_channels, blocks, stride=1):
@@ -341,38 +285,28 @@ class EncoderCNN(nn.Module):
         x = self.bn(x)                # (batch, 512)
         return x
 
+## LTSM class
+#Decorder RNN class (LSTM Model)
+#input: dimension of word embedd, dimension of ltsm hidden state, size of vocab, num of ltsm layer
 class DecoderRNN(nn.Module):
     def __init__(self, embed_size, hidden_size, vocab_size, num_layers=1):
-        """
-        Args:
-            embed_size: dimension of word embeddings
-            hidden_size: dimension of LSTM hidden states
-            vocab_size: size of vocabulary
-            num_layers: number of LSTM layers
-        """
         super(DecoderRNN, self).__init__()
         self.embed = nn.Embedding(vocab_size, embed_size)
         self.lstm = nn.LSTM(embed_size, hidden_size, num_layers, batch_first=True)
         self.linear = nn.Linear(hidden_size, vocab_size)
         self.dropout = nn.Dropout(p=0.5)
 
+    #forward propogation
+    #input: feature vector, captions
+    #output: vocab scores 
     def forward(self, features, captions):
-        """
-        Forward propagation.
-
-        Args:
-            features: encoded images, a tensor of dimension (batch_size, embed_size)
-            captions: captions, a tensor of dimension (batch_size, max_caption_length)
-
-        Returns:
-            outputs: scores for vocabulary, a tensor of dimension (batch_size, max_caption_length+1, vocab_size)
-        """
         embeddings = self.embed(captions)  # (batch_size, max_caption_length, embed_size)
         embeddings = torch.cat((features.unsqueeze(1), embeddings), dim=1)  # (batch_size, max_caption_length+1, embed_size)
         embeddings = self.dropout(embeddings)
         hiddens, _ = self.lstm(embeddings)  # (batch_size, max_caption_length+1, hidden_size)
         outputs = self.linear(hiddens)  # (batch_size, max_caption_length+1, vocab_size)
         return outputs
+
 
     def sample(self, features, word_to_idx, idx_to_word, max_length=20):
         """
