@@ -80,8 +80,8 @@ class ImageCaptioningDataset(Dataset):
 
     #Initialise datase - runs when that database class is instantiated
     #Input: image parent path, path to annotations, word to index map, transform to apply
-    def __init__(self, image_dir, annotation_file, word_to_idx, transform=None):
-        self.image_dir = image_dir
+    def __init__(self, img_folder_path, annotation_file, word_to_idx, transform=None):
+        self.img_folder_path = img_folder_path
         self.annotations = self.load_annotations(annotation_file)
         self.word_to_idx = word_to_idx
         self.transform = transform
@@ -101,7 +101,7 @@ class ImageCaptioningDataset(Dataset):
     def find_image_file(self, image_set, image_name):
         extensions = ['.jpg', '.jpeg', '.png', '.bmp', '.gif'] #target any extension
         for ext in extensions:
-            image_path = os.path.join(self.image_dir, image_set, image_name + ext)
+            image_path = os.path.join(self.img_folder_path, image_set, image_name + ext)
             logging.debug(f"Searching for image: {image_path}")
             if os.path.exists(image_path):
                 logging.debug(f"Found image: {image_path}")
@@ -161,11 +161,11 @@ class ImageCaptioningDataset(Dataset):
         return len(self.captions)
 
     #retrieves a data point from the set at specofoed index
-    def __getitem__(self, idx):
-        before_img_path, after_img_path = self.image_pairs[idx]
-        caption = self.captions[idx]
+    def __getitem__(self, index):
+        before_img_path, after_img_path = self.image_pairs[index]
+        caption = self.captions[index]
 
-        # Load images
+        #load images
         before_image = Image.open(before_img_path).convert('RGB')
         after_image = Image.open(after_img_path).convert('RGB')
 
@@ -183,7 +183,7 @@ class ImageCaptioningDataset(Dataset):
 def build_vocabulary(captions, threshold=1):
     tokens = []
     for caption in captions:
-        tokens.extend(tokenize_spacy(caption))  # Using spaCy tokenizer
+        tokens.extend(tokenize_spacy(caption))
     counter = Counter(tokens)
 
     #Dont include words less then min frequency
@@ -193,8 +193,8 @@ def build_vocabulary(captions, threshold=1):
     vocab = ['<pad>', '<start>', '<end>', '<unk>'] + vocab
 
     #map words to index vice versa
-    word_to_idx = {word: idx for idx, word in enumerate(vocab)}
-    idx_to_word = {idx: word for idx, word in enumerate(vocab)}
+    word_to_idx = {word: index for index, word in enumerate(vocab)}
+    idx_to_word = {index: word for index, word in enumerate(vocab)}
 
     return word_to_idx, idx_to_word, len(vocab)
 
@@ -202,7 +202,7 @@ def build_vocabulary(captions, threshold=1):
 #input: caption, word idex
 #output: list of word index
 def caption_to_sequence(caption, word_to_idx):
-    tokens = tokenize_spacy(caption)  # Using spaCy tokenizer
+    tokens = tokenize_spacy(caption)
     sequence = [word_to_idx.get('<start>')]
     for token in tokens:
         if token in word_to_idx:
@@ -336,100 +336,109 @@ class DecoderRNN(nn.Module):
         generated_caption = ' '.join(sampled_caption)
         return generated_caption
 
+#custom imgae captioning class for difference captioning
 class ImageCaptioningModel(nn.Module):
+
     def __init__(self, encoder, decoder):
         super(ImageCaptioningModel, self).__init__()
         self.encoder = encoder
         self.decoder = decoder
 
     def forward(self, before_images, after_images, captions):
-        # Encode before and after images
+
+        #Create feature vertexes of each image
         before_features = self.encoder(before_images)
         after_features = self.encoder(after_images)
 
-        # Compute feature difference
+        #Calculate degree of difference by subtracting images
         image_features = after_features - before_features  # (batch_size, embed_size)
 
-        # Decode captions
+        #create sequence of captions detailing the difference between two images
         outputs = self.decoder(image_features, captions)
         return outputs
 
-# -----------------------------
-# 6. Training Utilities
-# -----------------------------
 
+## Training Utilities
+#Contains code for training and validating the model
+
+#Training 
 def train(model, data_loader, criterion, optimizer, device, epoch, total_epochs, scaler):
+    #initialise model training, set to train state
     model.train()
-    total_loss = 0
+    total_loss = 0 #used to track loss accross batches may help us improve certain portions ///Review///
     for i, (before_imgs, after_imgs, captions, captions_strings) in enumerate(tqdm(data_loader, desc=f"Epoch {epoch}/{total_epochs}")):
         before_imgs = before_imgs.to(device)
         after_imgs = after_imgs.to(device)
         captions = captions.to(device)
 
-        # Zero the gradients
+        #Refreshes gradients, resolve pytorch gradient accumulation.
         optimizer.zero_grad()
 
+        #This part may improve performance///Review///
         with torch.amp.autocast(device_type='cuda'):
-            # Forward pass
-            outputs = model(before_imgs, after_imgs, captions[:, :-1])  # Exclude the last token for inputs
-            targets = captions[:, 1:]  # Shifted by one for targets
+            outputs = model(before_imgs, after_imgs, captions[:, :-1])
+            targets = captions[:, 1:]
 
-            # Adjust outputs to remove the first time step
-            outputs = outputs[:, 1:, :]  # (batch_size, max_length, vocab_size)
+            #Adjust outputs to remove the first time step
+            outputs = outputs[:, 1:, :]
 
-            # Ensure outputs and targets have the same number of elements
+            #Adjust outputs and targets to the same length
             if outputs.size(1) != targets.size(1):
                 min_length = min(outputs.size(1), targets.size(1))
                 outputs = outputs[:, :min_length, :]
                 targets = targets[:, :min_length]
 
-            # Compute loss
+            #calculates loss with criterion
             loss = criterion(outputs.reshape(-1, outputs.size(-1)), targets.reshape(-1))
 
-        # Backward pass and optimization
+        #backward pass
         scaler.scale(loss).backward()
         scaler.unscale_(optimizer)
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
         scaler.step(optimizer)
         scaler.update()
 
-        total_loss += loss.item()
+
+        total_loss += loss.item() #append loss to total
 
         if (i + 1) % 100 == 0:
             print(f"Step [{i + 1}/{len(data_loader)}], Loss: {loss.item():.4f}")
 
+    #calculate average loss and display to console
     avg_loss = total_loss / len(data_loader)
     print(f"Epoch [{epoch}/{total_epochs}], Average Loss: {avg_loss:.4f}")
     return avg_loss
 
-
+#Validation code
 def validate(model, data_loader, criterion, device):
+    #initiate model validation
     model.eval()
     total_loss = 0
+
     with torch.no_grad():
         for before_imgs, after_imgs, captions, captions_strings in tqdm(data_loader, desc="Validation"):
             before_imgs = before_imgs.to(device)
             after_imgs = after_imgs.to(device)
             captions = captions.to(device)
 
-            # Forward pass
+            #Forward pass
             outputs = model(before_imgs, after_imgs, captions[:, :-1])
             targets = captions[:, 1:]
 
-            # Adjust outputs to remove the first time step
-            outputs = outputs[:, 1:, :]  # (batch_size, max_length, vocab_size)
+            outputs = outputs[:, 1:, :]  
 
-            # Ensure outputs and targets have the same number of elements
+            #Adjust outputs and targets to the same length
             if outputs.size(1) != targets.size(1):
                 min_length = min(outputs.size(1), targets.size(1))
                 outputs = outputs[:, :min_length, :]
                 targets = targets[:, :min_length]
 
-            # Compute loss
+            #calculate loss
             loss = criterion(outputs.reshape(-1, outputs.size(-1)), targets.reshape(-1))
 
             total_loss += loss.item()
 
+    #calc average loss display to console
     avg_loss = total_loss / len(data_loader)
     print(f"Validation Loss: {avg_loss:.4f}")
     return avg_loss
@@ -438,17 +447,11 @@ def validate(model, data_loader, criterion, device):
 ## Evaluate code ## ///Review///
 #---------------------------#
 
+#calculate bleu score between reference an generated captions
+#input: reference captions and gnerated captions
+#outputs score of caption quality
 def calculate_bleu_score(reference, candidate):
-    """
-    Calculates BLEU-4 score between reference and candidate captions.
 
-    Args:
-        reference (str): Reference caption.
-        candidate (str): Generated caption.
-
-    Returns:
-        score (float): BLEU-4 score.
-    """
     reference_tokens = tokenize_spacy(reference)
     candidate_tokens = tokenize_spacy(candidate)
 
@@ -495,85 +498,63 @@ def evaluate_model(model, encoder, data_loader, val_captions, word_to_idx, idx_t
     print(f"Average BLEU-4 Score: {average_bleu:.4f}")
     return average_bleu
 
-# -----------------------------
-# 8. Caption Generation Utility
+
+#generate captions function
 # -----------------------------
 
+#generates captions for an image pair, define differences
+#input: captioning model, before_image, after_image, wordindex map, indexword map , device, captionlength
+#output the generated caption
 def generate_caption(model, encoder, before_image, after_image, word_to_idx, idx_to_word, device, max_length=20):
-    """
-    Generates a caption for a pair of images.
 
-    Args:
-        model: The Image Captioning model.
-        encoder: The CNN encoder.
-        before_image (PIL Image): The 'before' image.
-        after_image (PIL Image): The 'after' image.
-        word_to_idx (dict): Mapping from words to indices.
-        idx_to_word (dict): Mapping from indices to words.
-        device: Computation device.
-        max_length (int): Maximum length of the generated caption.
-
-    Returns:
-        generated_caption (str): The generated caption.
-    """
-    model.eval()
+    model.eval()  #initialise model validation
     with torch.no_grad():
-        # Define image transformations
+
+        #define image transform
         transform = transforms.Compose([
             transforms.Resize((224, 224)),
             transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406],  # Using ImageNet means
+            transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                  std=[0.229, 0.224, 0.225])
         ])
 
-        # Preprocess images
+        #proccess images via transform, change dimensions + structure
         before_tensor = transform(before_image).unsqueeze(0).to(device)  # (1, 3, 224, 224)
         after_tensor = transform(after_image).unsqueeze(0).to(device)
 
-        # Encode images
+        #Encoding feature vertex for use
         before_features = encoder(before_tensor)
         after_features = encoder(after_tensor)
         image_features = after_features - before_features  # Feature difference
 
-        # Generate caption
+        #decode features to produce captions
         generated_caption = model.decoder.sample(image_features, word_to_idx, idx_to_word, max_length)
 
     return generated_caption
 
-# -----------------------------
-# 9. GUI Utility (Optional)
-# -----------------------------
 
+#Graphical user interface //review implementation of Nics Code//
+# -----------------------------
+#input: image caption model, CNN encoder, list(before_img, after_img), word index map, index word map, device, max length of caption
 def display_caption(model, encoder, image_pair, word_to_idx, idx_to_word, device, max_length):
-    """
-    Displays image pairs and their generated captions in a GUI.
 
-    Args:
-        model: The Image Captioning model.
-        encoder: The CNN encoder.
-        image_pair (tuple): Tuple containing paths to 'before' and 'after' images.
-        word_to_idx (dict): Mapping from words to indices.
-        idx_to_word (dict): Mapping from indices to words.
-        device: Computation device.
-        max_length (int): Maximum length of the generated caption.
-    """
     before_img_path, after_img_path = image_pair
     before_image = Image.open(before_img_path).convert('RGB')
     after_image = Image.open(after_img_path).convert('RGB')
 
-    # Generate caption
+    #generate caption
     generated_caption = generate_caption(model, encoder, before_image, after_image, word_to_idx, idx_to_word, device,
                                          max_length)
 
-    # Load images for display
+    #load before and after images
     img_before = before_image.resize((300, 300))
     img_after = after_image.resize((300, 300))
 
-    # Create GUI window
+    #create tkinter window
     root = tk.Tk()
     root.title("Image Captioning")
 
-    # Display Before Image
+    #before image widget
     tk_before = ImageTk.PhotoImage(img_before)
     label_before = tk.Label(root, image=tk_before)
     label_before.image = tk_before  # Keep a reference
@@ -581,7 +562,7 @@ def display_caption(model, encoder, image_pair, word_to_idx, idx_to_word, device
     label_before_title = tk.Label(root, text="Before")
     label_before_title.pack(side="left")
 
-    # Display After Image
+    #after image widget
     tk_after = ImageTk.PhotoImage(img_after)
     label_after = tk.Label(root, image=tk_after)
     label_after.image = tk_after  # Keep a reference
@@ -589,30 +570,25 @@ def display_caption(model, encoder, image_pair, word_to_idx, idx_to_word, device
     label_after_title = tk.Label(root, text="After")
     label_after_title.pack(side="left")
 
-    # Display Captions
+    #captions widget
     caption_text = f"Generated Caption:\n{generated_caption}"
     label_caption = tk.Label(root, text=caption_text, wraplength=600, justify="left", font=("Helvetica", 12))
     label_caption.pack(pady=10)
 
     root.mainloop()
 
-# -----------------------------
-# 10. Main Function
-# -----------------------------
 
+# main function code
+#----------------------
 def main():
-    # -----------------------------
-    # Paths
-    # -----------------------------
-    # Set image_dir to the parent directory containing 'train' and 'val' subdirectories
-    image_dir = '../Train-Val-DS'
+
+    
+    img_folder_path = '../Train-Val-DS'#path to image directory containing train and val image sets
 
     train_annotation_file = '../train-val-annotations/capt_train_annotations.json'
     val_annotation_file = '../train-val-annotations/capt_val_annotations.json'
 
-    # -----------------------------
-    # Check if Annotation Files Exist
-    # -----------------------------
+   #confirm annotation files
     if not os.path.isfile(train_annotation_file):
         print(f"Error: Training annotation file not found at '{train_annotation_file}'.")
         return
@@ -620,9 +596,7 @@ def main():
         print(f"Error: Validation annotation file not found at '{val_annotation_file}'.")
         return
 
-    # -----------------------------
-    # Define Image Transformations
-    # -----------------------------
+    #define transform images to correct formatt
     transform = transforms.Compose([
         transforms.Resize((224, 224)),
         transforms.RandomHorizontalFlip(),  # Data augmentation
@@ -632,17 +606,13 @@ def main():
                              std=[0.229, 0.224, 0.225])
     ])
 
-    # -----------------------------
-    # Load Annotations
-    # -----------------------------
+    #load train and val annotations into lists via json.load
     with open(train_annotation_file, 'r') as f:
         train_annotations = json.load(f)
     with open(val_annotation_file, 'r') as f:
         val_annotations = json.load(f)
 
-    # -----------------------------
-    # Debugging: Inspect the First Few Entries
-    # -----------------------------
+    #Debug code view first few annotations ///review///
     print("\n--- Training Annotations Sample ---")
     for i, entry in enumerate(train_annotations[:2]):  # Inspect first 2 entries
         print(f"Entry {i + 1} Keys: {list(entry.keys())}")
@@ -653,9 +623,7 @@ def main():
         print(f"Entry {i + 1} Keys: {list(entry.keys())}")
         print(f"Entry {i + 1} Attributes: {[attr['key'] for attr in entry.get('attributes', [])]}")
 
-    # -----------------------------
-    # Extract Captions
-    # -----------------------------
+    # proccess train captions, to formatted list for proccessing
     try:
         train_captions = [' '.join([attr['value'] for attr in entry.get('attributes', []) if 'value' in attr]) for entry
                           in train_annotations]
@@ -664,6 +632,7 @@ def main():
         print("Please ensure each entry in the training annotation JSON has an 'attributes' key with 'value' fields.")
         return
 
+    #process validation capations to formatted list for proccessing
     try:
         val_captions = [' '.join([attr['value'] for attr in entry.get('attributes', []) if 'value' in attr]) for entry
                         in val_annotations]
@@ -672,48 +641,36 @@ def main():
         print("Please ensure each entry in the validation annotation JSON has an 'attributes' key with 'value' fields.")
         return
 
-    # -----------------------------
-    # Build Vocabulary
-    # -----------------------------
+    #create vocabulary
     word_to_idx, idx_to_word, vocab_size = build_vocabulary(train_captions, threshold=1)
     print(f"\nVocabulary Size: {vocab_size}")
 
-    # -----------------------------
-    # Inspect Vocabulary Coverage
-    # -----------------------------
+    #inspect vocubalary size and check if missing
     key_words = ['pineapple', 'rough', 'wider', 'light', 'yellow', 'thorns', 'smoother', 'darker']
     missing_words = [word for word in key_words if word not in word_to_idx]
     print(f"Missing Key Words in Vocabulary: {missing_words}")
 
-    # If any key words are missing, add them manually
+    #add missing words and update size
     for word in missing_words:
         word_to_idx[word] = len(word_to_idx)
         idx_to_word[len(idx_to_word)] = word
     vocab_size = len(word_to_idx)
     print(f"Updated Vocabulary Size after adding missing words: {vocab_size}")
 
-    # -----------------------------
-    # Preprocess Captions
-    # -----------------------------
+    #preproccess captions
     train_sequences = preprocess_captions(train_captions, word_to_idx)
     val_sequences = preprocess_captions(val_captions, word_to_idx)
 
-    # -----------------------------
-    # Pad Sequences
-    # -----------------------------
+    #padding captions lists to ensure they are the same length
     train_padded, max_length = pad_caption_sequences(train_sequences, word_to_idx, max_length=None)
     val_padded, _ = pad_caption_sequences(val_sequences, word_to_idx, max_length=max_length)
     print(f"Maximum Sequence Length: {max_length}")
 
-    # -----------------------------
-    # Instantiate Datasets
-    # -----------------------------
-    train_dataset = ImageCaptioningDataset(image_dir, train_annotation_file, word_to_idx, transform=transform)
-    val_dataset = ImageCaptioningDataset(image_dir, val_annotation_file, word_to_idx, transform=transform)
+    #instantiate image datasets
+    train_dataset = ImageCaptioningDataset(img_folder_path, train_annotation_file, word_to_idx, transform=transform)
+    val_dataset = ImageCaptioningDataset(img_folder_path, val_annotation_file, word_to_idx, transform=transform)
 
-    # -----------------------------
-    # Check if Datasets Are Empty
-    # -----------------------------
+    #debug ceck if datasets loaded correctly ///review///
     if len(train_dataset) == 0:
         print("Error: Training dataset is empty. Please check your image directory and annotations.")
         return
@@ -721,78 +678,64 @@ def main():
         print("Error: Validation dataset is empty. Please check your image directory and annotations.")
         return
 
-    # -----------------------------
-    # Define Collate Function with Partial
-    # -----------------------------
+    #partial collate function, removes collate wrapper to allow us to use collate and prefill wordindex map and max length
     collate_fn_partial = partial(collate_fn, word_to_idx=word_to_idx, max_length=max_length)
 
-    # -----------------------------
-    # Create DataLoaders
-    # -----------------------------
+    #define dataloaders
     batch_size = 16
-    num_workers = 4  # Adjust based on your system
+    num_workers = 4  #leveraging Multithreading (^more threads //Adjust to balance performnace too high can degrade
 
     train_loader = DataLoader(
         train_dataset,
         batch_size=batch_size,
-        shuffle=True,
+        shuffle=True, #shuffle set (True helps reduce over fitting)
         num_workers=num_workers,
-        pin_memory=True,  # Speeds up transfer to GPU
+        pin_memory=True,  #improves memory transfer between GPU and CPU
         collate_fn=collate_fn_partial
     )
     val_loader = DataLoader(
         val_dataset,
         batch_size=batch_size,
-        shuffle=False,  # Important for evaluation
+        shuffle=False, #shuffle set (False maintains consistency accross validation)
         num_workers=num_workers,
-        pin_memory=True,  # Speeds up transfer to GPU
+        pin_memory=True,  #improves memory transfer between GPU and CPU
         collate_fn=collate_fn_partial
     )
 
-    # -----------------------------
-    # Hyperparameters and Device Configuration
-    # -----------------------------
-    embed_size = 512  # Updated from 256 to 512 to match EncoderCNN output
+    #Model configuration
+    embed_size = 512 
     hidden_size = 512
     num_layers = 1
     learning_rate = 1e-4
-    num_epochs = 5  # Reduced from 20 to 5 as per your request
+    num_epochs = 5 
 
-    # Enable cuDNN benchmarking for optimized performance
+    #cuDNN benchmarking optimises performance for ML tasks - Targets NVIDIA GPU (LUKE)
     torch.backends.cudnn.benchmark = True
 
-    # Set device
+    #confirms GPU availability and sets device to CPU or GPU designed to endure GPU functionality is properly implemented
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"\nUsing device: {device}")
 
-    # -----------------------------
-    # Instantiate Encoder and Decoder
-    # -----------------------------
+    #define encoder and decoder variables
     encoder = EncoderCNN()
     decoder = DecoderRNN(embed_size, hidden_size, vocab_size, num_layers)
 
-    # Move models to device
+    #sets models to use target device
     encoder = encoder.to(device)
     decoder = decoder.to(device)
 
-    # -----------------------------
-    # Instantiate the Image Captioning Model
-    # -----------------------------
+    #image captioning model
     model = ImageCaptioningModel(encoder, decoder).to(device)
 
-    # -----------------------------
-    # Loss and Optimizer
-    # -----------------------------
+    #Loss and Optimisation
     criterion = nn.CrossEntropyLoss(ignore_index=word_to_idx['<pad>'])
     params = list(decoder.parameters()) + list(encoder.parameters())
     optimizer = torch.optim.Adam(params, lr=learning_rate)
 
-    # Initialize GradScaler for mixed precision
+    #GrandScalar to increase performance ///Review///
     scaler = amp.GradScaler()
 
-    # -----------------------------
-    # Training Loop
-    # -----------------------------
+    #Training loop based on defined number of Epochs
     train_losses = []
     val_losses = []
 
@@ -803,9 +746,7 @@ def main():
         train_losses.append(train_loss)
         val_losses.append(val_loss)
 
-    # -----------------------------
-    # Plot Training and Validation Loss
-    # -----------------------------
+    #plot loss
     plt.figure(figsize=(8, 6))
     plt.plot(range(1, num_epochs + 1), train_losses, label='Train Loss')
     plt.plot(range(1, num_epochs + 1), val_losses, label='Validation Loss')
@@ -815,29 +756,23 @@ def main():
     plt.legend()
     plt.show()
 
-    # -----------------------------
-    # Evaluate the Model
-    # -----------------------------
+    #evaluate model performanace //review//
     average_bleu = evaluate_model(model, encoder, val_loader, val_dataset.captions, word_to_idx, idx_to_word, device, max_length)
 
-    # -----------------------------
-    # Generate a Sample Caption
-    # -----------------------------
-    sample_idx = 0  # Change as needed
-    if sample_idx < len(val_dataset):
-        before_img_path, after_img_path = val_dataset.image_pairs[sample_idx]
+    #Debug create sample captions
+    sample_index = 0
+    if sample_index < len(val_dataset):
+        before_img_path, after_img_path = val_dataset.image_pairs[sample_index]
         before_image = Image.open(before_img_path).convert('RGB')
         after_image = Image.open(after_img_path).convert('RGB')
 
         generated_caption = generate_caption(model, encoder, before_image, after_image, word_to_idx, idx_to_word,
                                              device, max_length)
         print(f"\nGenerated Caption: {generated_caption}")
-        print(f"Reference Caption: {val_dataset.captions[sample_idx].lower()}")
+        print(f"Reference Caption: {val_dataset.captions[sample_index].lower()}")
 
-        # -----------------------------
-        # Optional: Display in GUI
-        # -----------------------------
-        display_caption(model, encoder, val_dataset.image_pairs[sample_idx], word_to_idx, idx_to_word, device,
+        #Call Gui to display images and captions
+        display_caption(model, encoder, val_dataset.image_pairs[sample_index], word_to_idx, idx_to_word, device,
                         max_length)
     else:
         print("Sample index is out of range for the validation dataset.")
