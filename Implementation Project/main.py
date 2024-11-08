@@ -25,12 +25,14 @@ from torch.cuda import amp
 
 import tkinter as tk
 
+from pycocoevalcap.cider.cider import Cider
+from pycocoevalcap.tokenizer.ptbtokenizer import PTBTokenizer
+    
 
 ### Initialize spaCy and Logging ###
-#----------------------------------#
-
 #Define Logging structure to track code progress
 logging.basicConfig(
+
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
@@ -42,6 +44,7 @@ logging.basicConfig(
 #Load English Vocabulary from spaCy
 try:
     nlp = spacy.load('en_core_web_sm')
+
 except OSError:
     print("'en_core_web_sm' not found.... Downloading")
     from spacy.cli import download
@@ -56,34 +59,15 @@ def tokenize_text(target_txt):
     return [token.text for token in var]
 
 
-## Define Collate Function ##
-#---------------------------#
-
-#Formats images and captions to correctly sized tensors
-#Input: List of data (before_image, after_image, caption), word to index dictionary, maximum length for padding
-#Output: correctly formatted Tensors, before_image, after_image, captions, list of string captions
-def collate_fn(data, word_index, max_length):
-    before_images, after_images, captions = zip(*data)
-    #Stack images
-    before_images = torch.stack(before_images, 0)
-    after_images = torch.stack(after_images, 0)
-    #add all captions to a list
-    caption_list = [caption_to_sequence(caption, word_index) for caption in captions]
-
-    #add padding = make all captions same length
-    padded_captions, _ = pad_caption_sequences(caption_list, word_index, max_length=max_length)
-
-    return before_images, after_images, padded_captions, captions
-
 
 ## Dataset Class ##
-#-----------------#
 #Define custom dataset class, with variables and methods used for loading and proccessing of images
 class ImageCaptioningDataset(Dataset):
 
     #Initialise datase - runs when that database class is instantiated
     #Input: image parent path, path to annotations, word to index map, transform to apply
     def __init__(self, img_folder_path, annotation_file, word_index, transform=None):
+
         self.img_folder_path = img_folder_path
         self.annotations = self.load_annotations(annotation_file)
         self.word_index = word_index
@@ -103,13 +87,15 @@ class ImageCaptioningDataset(Dataset):
     #output: (if found)target image path or  (if not found)none
     def find_image_file(self, image_set, image_name):
         extensions = ['.jpg', '.jpeg', '.png', '.bmp', '.gif'] #target any extension
+
         for ext in extensions:
             image_path = os.path.join(self.img_folder_path, image_set, image_name + ext)
-            logging.debug(f"Searching for image: {image_path}")
+            print(f"Searching for image: {image_path}")
             if os.path.exists(image_path):
-                logging.debug(f"Found image: {image_path}")
+                print(f"Image Found: {image_path}")
                 return image_path
-        logging.debug(f"Image not found: {image_set}/{image_name}")
+            
+        print(f"Image not found: {image_set}/{image_name}")
         return None
 
     #Used to load images and captions and match the captions to the target file names
@@ -145,6 +131,7 @@ class ImageCaptioningDataset(Dataset):
             #checks if all data founds and if so adds returns the images + captions
             if after_img and before_img:
                 image_pairs.append((before_img, after_img))
+
                 #Extracts each individual caption and adds them to a string ////Review////
                 attribute_values = [attr['value'] for attr in entry.get('attributes', []) if 'value' in attr]
                 concatenated_captions = ' '.join(attribute_values)
@@ -165,6 +152,7 @@ class ImageCaptioningDataset(Dataset):
 
     #retrieves a data point from the set at specofoed index
     def __getitem__(self, index):
+
         before_img_path, after_img_path = self.image_pairs[index]
         caption = self.captions[index]
 
@@ -178,9 +166,26 @@ class ImageCaptioningDataset(Dataset):
 
         return before_image, after_image, caption  # Return caption string
 
+#Collate function
+#Formats images and captions to correctly sized tensors
+#Input: List of data (before_image, after_image, caption), word to index dictionary, maximum length for padding
+#Output: correctly formatted Tensors, before_image, after_image, captions, list of string captions
+def collate_fn(data, word_index, max_length):
+    before_images, after_images, captions = zip(*data)
+
+    #Stack images
+    before_images = torch.stack(before_images, 0)
+    after_images = torch.stack(after_images, 0)
+    #add all captions to a list
+    caption_list = [caption_to_sequence(caption, word_index) for caption in captions]
+
+    #add padding = make all captions same length
+    padded_captions, _ = pad_caption_sequences(caption_list, word_index, max_length=max_length)
+
+    return before_images, after_images, padded_captions, captions
+
 
 ## Create Vocabulary ##
-#--------------------#
 #input: list of captions, min frequency reqired to add word to vocab
 #output: wordindex map, index word map, size of vocabulary  ////Word index concept ///REVIEW/////
 def build_vocabulary(captions, threshold=1):
@@ -219,8 +224,9 @@ def caption_to_sequence(caption, word_index):
 #input: caption, word index
 #output: list of word index
 def preprocess_captions(captions, word_index):
-    sequences = [caption_to_sequence(caption, word_index) for caption in captions]
-    return sequences
+    wordindex_list = [caption_to_sequence(caption, word_index) for caption in captions]
+
+    return wordindex_list
 
 #make captions have equal lengths via padding
 #input: word index list, word index, max padd length
@@ -236,6 +242,7 @@ def pad_caption_sequences(sequences, word_index, max_length=None):
             seq = seq[:max_length]
         padded_sequences.append(torch.tensor(seq, dtype=torch.long))
     padded_sequences = torch.stack(padded_sequences)
+
     return padded_sequences, max_length
 
 ### CNN STRUCTURE class ####
@@ -267,10 +274,12 @@ class EncoderCNN(nn.Module):
         layers.append(nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=stride, padding=1))
         layers.append(nn.BatchNorm2d(out_channels))
         layers.append(nn.ReLU(inplace=True))
+
         for _ in range(1, blocks):
             layers.append(nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1))
             layers.append(nn.BatchNorm2d(out_channels))
             layers.append(nn.ReLU(inplace=True))
+
         return nn.Sequential(*layers)
 
     def forward(self, images):
@@ -286,7 +295,8 @@ class EncoderCNN(nn.Module):
         x = self.adaptive_pool(x)    
         x = x.view(x.size(0), -1)     
         x = self.fc(x)                
-        x = self.bn(x)                
+        x = self.bn(x)  
+
         return x
 
 ## LTSM class
@@ -308,7 +318,8 @@ class DecoderRNN(nn.Module):
         embeddings = torch.cat((features.unsqueeze(1), embeddings), dim=1)  
         embeddings = self.dropout(embeddings)
         hiddens, _ = self.lstm(embeddings)  
-        outputs = self.linear(hiddens)  
+        outputs = self.linear(hiddens) 
+
         return outputs
 
 
@@ -337,6 +348,7 @@ class DecoderRNN(nn.Module):
                 break
             sampled_caption.append(word)
         generated_caption = ' '.join(sampled_caption)
+
         return generated_caption
 
 #custom imgae captioning class for difference captioning
@@ -358,6 +370,7 @@ class ImageCaptioningModel(nn.Module):
 
         #create sequence of captions detailing the difference between two images
         outputs = self.decoder(image_features, captions)
+
         return outputs
 
 
@@ -410,6 +423,7 @@ def train(model, data_loader, criterion, optimizer, proccess_unit, epoch, total_
     #calculate average loss and display to console
     avg_loss = total_loss / len(data_loader)
     print(f"Epoch [{epoch}/{total_epochs}], Average Loss: {avg_loss:.4f}")
+
     return avg_loss
 
 #Validation code
@@ -444,6 +458,7 @@ def validate(model, data_loader, criterion, proccess_unit):
     #calc average loss display to console
     avg_loss = total_loss / len(data_loader)
     print(f"Validation Loss - {avg_loss:.4f}")
+
     return avg_loss
 
 
@@ -453,7 +468,7 @@ def validate(model, data_loader, criterion, proccess_unit):
 #calculate bleu score between reference an generated captions
 #input: reference captions and gnerated captions
 #outputs score of caption quality
-def calc_bleu_score(ref_caption, gen_caption):
+def compute_bleu(ref_caption, gen_caption):
 
     ref_tokens = tokenize_text(ref_caption)
     gen_tokens = tokenize_text(gen_caption)
@@ -463,43 +478,82 @@ def calc_bleu_score(ref_caption, gen_caption):
 
     smoothie = SmoothingFunction().method4
     score = sentence_bleu(ref_caption, gen_caption, weights=(0.25, 0.25, 0.25, 0.25), smoothing_function=smoothie)
+
     return score
 
+#Consensus-based Image Description Evaluation
+#evaluate the CIDEr score on the model
+#input: reference caption, generated caption
+#output: cider score
+def compute_cider(ref_list, gen_list):
+    #put in dictionary format
+    gen_dict = {}
+    ref_dict = {}
 
+    for x in  range(len(gen_list)):
+        gen_dict[x] = [{'image_id': x, 'caption': gen_list[x]}]
+        ref_dict[x] = [{'image_id': x, 'caption': ref_list[x]}]
+
+      #tokenise dictionaries with PTB
+    ptb_tokenizer = PTBTokenizer()
+    gen_dict = ptb_tokenizer.tokenize(gen_list)
+    ref_dict = ptb_tokenizer.tokenize(gen_list)
+    
+    #use pycocoevalcap library to calculate Cider score
+    cider_scorer = Cider()
+    score, _ = cider_scorer.compute_score(ref_dict, gen_dict)
+
+    return score
+
+#evaluate model calls all evaluation methods, preproccesses inputs and provides outputs
 def evaluate_model(model, encoder, data_loader, val_captions, word_index, index_word, proccess_unit, max_length):
     model.eval()
     bleu_scores = []
-    caption_iter = iter(val_captions)  # Create an iterator over the original captions
+    cider_scores = []
+
+    for index in range(len(val_captions)):
+        val_captions[index] = val_captions[index].lower()
+
     with torch.no_grad():
         for before_imgs, after_imgs, captions, captions_strings in tqdm(data_loader, desc="Evaluating"):
             before_imgs = before_imgs.to(proccess_unit)
             after_imgs = after_imgs.to(proccess_unit)
 
-            # Encode images
+            #image encoding
             before_features = encoder(before_imgs)
             after_features = encoder(after_imgs)
             image_features = after_features - before_features  # Feature difference
 
-            # Generate captions
+            #generate captions
             gen_captions = []
             for i in range(image_features.size(0)):
                 feature = image_features[i].unsqueeze(0).to(proccess_unit)
                 caption = model.decoder.sample(feature, word_index, index_word, max_length)
-                gen_captions.append(caption)
+                gen_captions.append(caption.lower())
 
-            # Calculate BLEU scores
+            #Calculate BLEU scoresres
             for i in range(image_features.size(0)):
                 try:
-                    target_caption = next(caption_iter).lower()
+                    ref_caption = next(iter(val_captions))
                 except StopIteration:
-                    target_caption = ''
+                    ref_caption = ''
                 gen_caption = gen_captions[i]
-                bleu = calc_bleu_score(target_caption, gen_caption)
-                bleu_scores.append(bleu)
+                #bleu
+                bleu_score = compute_bleu(ref_caption, gen_caption)
+                bleu_scores.append(bleu_score)
 
+            #calculate CIDEr score
+            cider_score = compute_cider(val_captions, gen_captions)
+            cider_scores.append(cider_score)
+
+    #calculate score averages
     average_bleu = sum(bleu_scores) / len(bleu_scores) if bleu_scores else 0
-    print(f"Average bleu_score: {average_bleu:.4f}")
-    return average_bleu
+    average_cider = sum(cider_scores) / len(cider_scores) if cider_scores else 0
+
+    print(f"bleu score average: {average_bleu:.4f}")
+    print(f"CIDEr score average: {average_cider:.4f}")
+
+    return average_bleu, average_cider
 
 
 #generate captions function
@@ -521,13 +575,13 @@ def generate_caption(model, encoder, before_image, after_image, word_index, inde
         ])
 
         #proccess images via transform, change dimensions + structure
-        before_tensor = transform(before_image).unsqueeze(0).to(proccess_unit)  # (1, 3, 224, 224)
+        before_tensor = transform(before_image).unsqueeze(0).to(proccess_unit)
         after_tensor = transform(after_image).unsqueeze(0).to(proccess_unit)
 
         #Encoding feature vertex for use
         before_features = encoder(before_tensor)
         after_features = encoder(after_tensor)
-        image_features = after_features - before_features  # Feature difference
+        image_features = after_features - before_features 
 
         #decode features to produce captions
         generated_caption = model.decoder.sample(image_features, word_index, index_word, max_length)
@@ -559,7 +613,7 @@ def displayGUI(model, encoder, image_pair, word_index, index_word, proccess_unit
     #before image widget
     tk_before = ImageTk.PhotoImage(img_before)
     label_before = tk.Label(root, image=tk_before)
-    label_before.image = tk_before  # Keep a reference
+    label_before.image = tk_before 
     label_before.pack(side="left", padx=10, pady=10)
     label_before_title = tk.Label(root, text="Before")
     label_before_title.pack(side="left")
@@ -567,7 +621,7 @@ def displayGUI(model, encoder, image_pair, word_index, index_word, proccess_unit
     #after image widget
     tk_after = ImageTk.PhotoImage(img_after)
     label_after = tk.Label(root, image=tk_after)
-    label_after.image = tk_after  # Keep a reference
+    label_after.image = tk_after
     label_after.pack(side="left", padx=10, pady=10)
     label_after_title = tk.Label(root, text="After")
     label_after_title.pack(side="left")
@@ -694,7 +748,7 @@ def main():
         pin_memory=True,  #improves memory transfer between GPU and CPU
         collate_fn=collate_fn_partial
     )
-    val_loader = DataLoader(
+    val_loader = DataLoader( 
         val_dataset,
         batch_size=batch_size,
         shuffle=False, #shuffle set (False maintains consistency accross validation)
@@ -758,22 +812,23 @@ def main():
     plt.show()
 
     #evaluate model performanace
-    average_bleu = evaluate_model(model, encoder, val_loader, val_dataset.captions, word_index, index_word, proccess_unit, max_length)
+    average_bleu, average_cider = evaluate_model(model, encoder, val_loader, val_dataset.captions, word_index, index_word, proccess_unit, max_length)
 
     #Debug create sample captions ///review///
-    sample_index = 0
-    if sample_index < len(val_dataset):
-        before_img_path, after_img_path = val_dataset.image_pairs[sample_index]
+    index = 0
+    if index < len(val_dataset):
+
+        before_img_path, after_img_path = val_dataset.image_pairs[index]
         before_image = Image.open(before_img_path).convert('RGB')
         after_image = Image.open(after_img_path).convert('RGB')
 
         generated_caption = generate_caption(model, encoder, before_image, after_image, word_index, index_word,
                                              proccess_unit, max_length)
         print(f"\nGenerated Caption: {generated_caption}")
-        print(f"Reference Caption: {val_dataset.captions[sample_index].lower()}")
+        print(f"Reference Caption: {val_dataset.captions[index].lower()}")
 
-        #Call Gui to display images and captions
-        displayGUI(model, encoder, val_dataset.image_pairs[sample_index], word_index, index_word, proccess_unit,
+        #Call Gui to display images and captions --- ERRORS WITH GUI MUST FIX
+        displayGUI(model, encoder, val_dataset.image_pairs[index], word_index, index_word, proccess_unit,
                         max_length)
     else:
         print("Sample index is out of range for the validation dataset.")
