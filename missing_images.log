@@ -52,3 +52,6 @@
 2024-11-08 18:50:15,045 - INFO - Missing images for entry: val/v1_1571_high-speed train. Missing files: train/v1_1571_after, train/v1_1571_before
 2024-11-08 18:50:15,331 - INFO - Missing images for entry: val/v1_706_high-speed train. Missing files: train/v1_706_after, train/v1_706_before
 2024-11-08 18:50:15,337 - INFO - Missing images for entry: val/v1_70_strainer. Missing files: train/v1_70_after, train/v1_70_before
+2024-11-08 19:15:01,214 - INFO - Missing images for entry: val/v1_1571_high-speed train. Missing files: train/v1_1571_after, train/v1_1571_before
+2024-11-08 19:15:01,560 - INFO - Missing images for entry: val/v1_706_high-speed train. Missing files: train/v1_706_after, train/v1_706_before
+2024-11-08 19:15:01,565 - INFO - Missing images for entry: val/v1_70_strainer. Missing files: train/v1_70_after, train/v1_70_before
