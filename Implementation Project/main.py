@@ -224,9 +224,9 @@ def caption_to_sequence(caption, word_index):
 #input: caption, word index
 #output: list of word index
 def preprocess_captions(captions, word_index):
-    wordindex_list = [caption_to_sequence(caption, word_index) for caption in captions]
+    caption_list = [caption_to_sequence(caption, word_index) for caption in captions]
 
-    return wordindex_list
+    return caption_list
 
 #make captions have equal lengths via padding
 #input: word index list, word index, max padd length
@@ -703,18 +703,6 @@ def main():
     word_index, index_word, vocab_size = build_vocabulary(train_captions, threshold=1)
     print(f"\nVocabulary Size: {vocab_size}")
 
-    #inspect vocubalary size and check if missing
-    key_words = ['pineapple', 'rough', 'wider', 'light', 'yellow', 'thorns', 'smoother', 'darker']
-    missing_words = [word for word in key_words if word not in word_index]
-    print(f"Missing Key Words in Vocabulary: {missing_words}")
-
-    #add missing words and update size
-    for word in missing_words:
-        word_index[word] = len(word_index)
-        index_word[len(index_word)] = word
-    vocab_size = len(word_index)
-    print(f"Updated Vocabulary Size after adding missing words: {vocab_size}")
-
     #preproccess captions
     train_sequences = preprocess_captions(train_captions, word_index)
     val_sequences = preprocess_captions(val_captions, word_index)
@@ -728,7 +716,7 @@ def main():
     train_dataset = ImageCaptioningDataset(img_folder_path, train_annotation_path, word_index, transform=transform)
     val_dataset = ImageCaptioningDataset(img_folder_path, val_annotation_path, word_index, transform=transform)
 
-    #debug ceck if datasets loaded correctly ///review///
+    #debug check if datasets loaded correctly ///review///
     if len(train_dataset) == 0:
         print("Error loading Training set.")
         return
@@ -756,13 +744,13 @@ def main():
         pin_memory=True,  #improves memory transfer between GPU and CPU
         collate_fn=collate_fn_partial
     )
-
+    
     #Model configuration
     embed_size = 512 
     hidden_size = 512
     num_layers = 1
     learning_rate = 1e-4
-    num_epochs = 1 ### Default to 5
+    num_epochs = 2 ### Default to 5
 
     #cuDNN benchmarking optimises performance for ML tasks - Targets NVIDIA GPU (LUKE)
     torch.backends.cudnn.benchmark = True
