@@ -496,9 +496,9 @@ def compute_cider(ref_list, gen_list):
 
       #tokenise dictionaries with PTB
     ptb_tokenizer = PTBTokenizer()
-    gen_dict = ptb_tokenizer.tokenize(gen_list)
-    ref_dict = ptb_tokenizer.tokenize(gen_list)
-    
+    gen_dict = ptb_tokenizer.tokenize(gen_dict)
+    ref_dict = ptb_tokenizer.tokenize(ref_dict)
+
     #use pycocoevalcap library to calculate Cider score
     cider_scorer = Cider()
     score, _ = cider_scorer.compute_score(ref_dict, gen_dict)
