@@ -1,2 +1,2 @@
 # Subtle_Difference
-Implementation Project
+Simple AI University Project
